@@ -1,3 +1,4 @@
+import ChatTTS
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,11 +10,10 @@ import sys
 import os
 import asyncio
 import torch
+import logging
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'ChatTTS')))
-import ChatTTS
+logger = logging.getLogger('     ')
 
-chat = ChatTTS.Chat()
 app = FastAPI()
 
 app.add_middleware(
@@ -24,50 +24,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class Text2Speech(BaseModel):
     text: str
-    voice: str
+    voice: int
+    prompt: str
+
 
 model_path = os.path.join(os.path.dirname(__file__), 'models')
-model_files = [
-    os.path.join(model_path, 'asset/Decoder.pt'),
-    os.path.join(model_path, 'asset/DVAE.pt'),
-    os.path.join(model_path, 'asset/GPT.pt'),
-    os.path.join(model_path, 'asset/spk_stat.pt'),
-    os.path.join(model_path, 'asset/tokenizer.pt'),
-    os.path.join(model_path, 'asset/Vocos.pt'),
-    os.path.join(model_path, 'config/decoder.yaml'),
-    os.path.join(model_path, 'config/dvae.yaml'),
-    os.path.join(model_path, 'config/gpt.yaml'),
-    os.path.join(model_path, 'config/path.yaml'),
-    os.path.join(model_path, 'config/vocos.yaml')
-]
 
-all_files_exist = all(os.path.exists(file_path) for file_path in model_files)
-assert all_files_exist, "Model files do not exist, please download the models."
-print('Load models from local path.')
-chat.load_models(source='local', local_path=model_path)
+chat = ChatTTS.Chat()
+chat.load_models(
+    vocos_config_path=os.path.join(model_path, 'config/vocos.yaml'),
+    vocos_ckpt_path=os.path.join(model_path, 'asset/Vocos.pt'),
+    dvae_config_path=os.path.join(model_path, 'config/dvae.yaml'),
+    dvae_ckpt_path=os.path.join(model_path, 'asset/DVAE.pt'),
+    gpt_config_path=os.path.join(model_path, 'config/gpt.yaml'),
+    gpt_ckpt_path=os.path.join(model_path, 'asset/GPT.pt'),
+    decoder_config_path=os.path.join(model_path, 'config/decoder.yaml'),
+    decoder_ckpt_path=os.path.join(model_path, 'asset/Decoder.pt'),
+    tokenizer_path=os.path.join(model_path, 'asset/tokenizer.pt'),
+)
+
 
 @app.post("/generate")
 async def generate_text(request: Text2Speech):
     text = request.text
-    voice = request.voice
-    if voice == 'man':
-        torch.manual_seed(2222)
-    else:
-       torch.manual_seed(6615)
+    torch.manual_seed(request.voice)
+    std, mean = torch.load(os.path.join(model_path, 'asset/spk_stat.pt')).chunk(2)
+    rand_spk = torch.randn(768) * std + mean
     params_infer_code = {
-        'spk_emb': chat.sample_random_speaker(),
+        'spk_emb': rand_spk,
         'temperature': 0.1,
         'top_P': 0.7,
         'top_K': 20,
-        }
+    }
 
-    wavs = await asyncio.to_thread(chat.infer, text, use_decoder=True, params_infer_code=params_infer_code)
+    params_refine_text = {
+        # 'prompt': '[oral_2][laugh_0][break_6]'
+        'prompt': request.prompt
+    }
+
+    wavs = await asyncio.to_thread(chat.infer, text, use_decoder=True, params_refine_text=params_refine_text,  params_infer_code=params_infer_code)
     audio_data = np.array(wavs[0])
     if audio_data.ndim == 1:
         audio_data = np.expand_dims(audio_data, axis=0)
-    
+
     if not os.path.exists('outputs'):
         os.makedirs('outputs')
     output_file = f'outputs/{datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")}.wav'
@@ -75,5 +77,6 @@ async def generate_text(request: Text2Speech):
     return FileResponse(output_file, media_type='audio/wav', filename='generated_audio.wav')
 
 if __name__ == "__main__":
+    logger.info('node-server running on http://0.0.0.0:3000 \n')
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

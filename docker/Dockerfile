@@ -1,23 +1,26 @@
 FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-devel
 
-WORKDIR /app
+WORKDIR /app/ChatTTS
 
-RUN apt-get update && \
-    apt-get install -y curl git git-lfs && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    git-lfs install && \
-    git clone https://github.com/Gouryella/ChatTTS-webui.git
+ADD . /app/ChatTTS
 
-WORKDIR /app/ChatTTS-webui
+RUN apt-get update \
+    && apt-get install -y curl \
+    && curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -  \
+    && apt-get install -y nodejs \
+    && npm install --global yarn  \
+    && rm -rf node_modules \
+    && yarn config set registry https://registry.npm.taobao.org/ \
+    && yarn \
+    && yarn build \
+    && pip install --no-cache-dir -r requirements.txt \
+    && chmod +x ./docker/start.sh
 
-RUN npm install -g yarn && yarn install && \
-    git clone https://github.com/2noise/ChatTTS.git api/ChatTTS && \
-    git clone https://huggingface.co/2Noise/ChatTTS.git api/models && \
-    pip install --no-cache-dir -r requirements.txt
-
-RUN chmod +x /app/ChatTTS-webui/docker/start.sh
+RUN apt-get clean all \
+    && rm -rf /var/lib/apt/lists/* 
 
 EXPOSE 3000
+EXPOSE 8000
 
-CMD ["/app/ChatTTS-webui/docker/start.sh"]
+ENTRYPOINT ["bash", "-c"]
+CMD ["./docker/start.sh"]

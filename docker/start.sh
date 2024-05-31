@@ -1,4 +1,7 @@
 #!/bin/bash
-cd /app/ChatTTS-webui/
-nohup npm run dev > /dev/null 2>&1 &
+
+cd /app/ChatTTS
+nohup yarn preview > /dev/null 2>&1 &
+
+# start api
 python api/server.py
